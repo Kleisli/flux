@@ -30,11 +30,6 @@ abstract class AbstractFormField extends AbstractFormComponent implements FieldI
     protected $default;
 
     /**
-     * @var string
-     */
-    protected $transform;
-
-    /**
      * Display condition - see https://docs.typo3.org/typo3cms/TCAReference/Reference/Columns/Index.html#displaycond
      *
      * @var string
@@ -65,11 +60,6 @@ abstract class AbstractFormField extends AbstractFormComponent implements FieldI
      * @var boolean
      */
     protected $exclude = true;
-
-    /**
-     * @var boolean
-     */
-    protected $enable = true;
 
     /**
      * @var string
@@ -206,7 +196,7 @@ abstract class AbstractFormField extends AbstractFormComponent implements FieldI
      */
     public function build()
     {
-        if (false === $this->getEnable()) {
+        if (false === $this->getEnabled()) {
             return [];
         }
         $configuration = $this->buildConfiguration();
@@ -288,24 +278,6 @@ abstract class AbstractFormField extends AbstractFormComponent implements FieldI
     }
 
     /**
-     * @param string $transform
-     * @return FieldInterface
-     */
-    public function setTransform($transform)
-    {
-        $this->transform = $transform;
-        return $this;
-    }
-
-    /**
-     * @return string
-     */
-    public function getTransform()
-    {
-        return $this->transform;
-    }
-
-    /**
      * @param string $displayCondition
      * @return FieldInterface
      */
@@ -357,24 +329,6 @@ abstract class AbstractFormField extends AbstractFormComponent implements FieldI
     public function getExclude()
     {
         return (boolean) $this->exclude;
-    }
-
-    /**
-     * @param boolean $enable
-     * @return FieldInterface
-     */
-    public function setEnable($enable)
-    {
-        $this->enable = (boolean) $enable;
-        return $this;
-    }
-
-    /**
-     * @return boolean
-     */
-    public function getEnable()
-    {
-        return (boolean) $this->enable;
     }
 
     /**

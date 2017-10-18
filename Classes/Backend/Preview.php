@@ -15,7 +15,6 @@ use TYPO3\CMS\Backend\Template\ModuleTemplate;
 use TYPO3\CMS\Backend\View\PageLayoutView;
 use TYPO3\CMS\Backend\View\PageLayoutViewDrawItemHookInterface;
 use TYPO3\CMS\Core\Page\PageRenderer;
-use TYPO3\CMS\Core\Utility\ExtensionManagementUtility;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Utility\PathUtility;
 use TYPO3\CMS\Extbase\Object\ObjectManager;
@@ -131,13 +130,9 @@ class Preview implements PageLayoutViewDrawItemHookInterface
             /** @var PageRenderer $pageRenderer */
             $pageRenderer = $doc->getPageRenderer();
             $pageRenderer->addCssFile(
-                $doc->backPath . ExtensionManagementUtility::extRelPath('flux') . 'Resources/Public/css/grid.css'
+                'EXT:flux/Resources/Public/css/grid.css'
             );
 
-            // /typo3/sysext/backend/Resources/Public/JavaScript/LayoutModule/DragDrop.js
-            // is not the perfect solution for Flux Grids!
-            // an adapted version of DragDrop.js is used - Resources/Public/js/VersionSevenPointTwo/DragDrop.js
-            // Also fluxCollapse.js is updated.
             $fullJsPath = PathUtility::getRelativePath(
                 PATH_typo3,
                 GeneralUtility::getFileAbsFileName('EXT:flux/Resources/Public/js/')

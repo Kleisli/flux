@@ -15,9 +15,10 @@ use FluidTYPO3\Flux\Form\Container\Grid;
 use FluidTYPO3\Flux\Provider\ProviderInterface;
 use FluidTYPO3\Flux\Service\ContentService;
 use FluidTYPO3\Flux\Service\FluxService;
+use FluidTYPO3\Flux\Service\RecordService;
 use FluidTYPO3\Flux\Service\WorkspacesAwareRecordService;
 use FluidTYPO3\Flux\Utility\ClipBoardUtility;
-use FluidTYPO3\Flux\Utility\CompatibilityRegistry;
+use FluidTYPO3\Flux\Utility\ExtensionNamingUtility;
 use FluidTYPO3\Flux\Utility\MiscellaneousUtility;
 use FluidTYPO3\Flux\Utility\RecursiveArrayUtility;
 use TYPO3\CMS\Backend\Controller\PageLayoutController;
@@ -32,13 +33,13 @@ use TYPO3\CMS\Core\Versioning\VersionState;
 use TYPO3\CMS\Extbase\Configuration\ConfigurationManagerInterface;
 use TYPO3\CMS\Extbase\Object\ObjectManager;
 use TYPO3\CMS\Extbase\Utility\LocalizationUtility;
-use TYPO3\CMS\Frontend\ContentObject\ContentObjectRenderer;
+use TYPO3\CMS\Fluid\View\TemplateView;
 use TYPO3\CMS\Lang\LanguageService;
 
 /**
  * PreviewView
  */
-class PreviewView
+class PreviewView extends TemplateView
 {
 
     const OPTION_PREVIEW = 'preview';
@@ -73,7 +74,7 @@ class PreviewView
                                     <div class="t3-page-ce t3js-page-ce" data-page="%s">
                                         <div class="t3js-page-new-ce t3-page-ce-wrapper-new-ce" id="%s"
                                             style="display: block;">
-                                            %s%s%s
+                                            %s%s
                                         </div>
                                         <div class="t3-page-ce-dropzone-available t3js-page-ce-dropzone-available" ></div>
                                     </div>
@@ -141,6 +142,12 @@ class PreviewView
     }
 
     /**
+     * @var RecordService
+     */
+    protected $recordService;
+
+
+    /**
      * @param ConfigurationManagerInterface $configurationManager
      * @return void
      */
@@ -165,6 +172,15 @@ class PreviewView
     public function injectWorkspacesAwareRecordService(WorkspacesAwareRecordService $workspacesAwareRecordService)
     {
         $this->workspacesAwareRecordService = $workspacesAwareRecordService;
+    }
+
+    /**
+     * @param RecordService $recordService
+     * @return void
+     */
+    public function injectRecordService(RecordService $recordService)
+    {
+        $this->recordService = $recordService;
     }
 
     /**
@@ -250,11 +266,10 @@ class PreviewView
     protected function renderPreviewSection(ProviderInterface $provider, array $row, Form $form = null)
     {
         $templatePathAndFilename = $provider->getTemplatePathAndFilename($row);
-        if (null === $templatePathAndFilename) {
+        if (!$templatePathAndFilename) {
             return null;
         }
         $extensionKey = $provider->getExtensionKey($row);
-        $paths = $provider->getTemplatePaths($row);
 
         $flexformVariables = $provider->getFlexFormValues($row);
         $templateVariables = $provider->getTemplateVariables($row);
@@ -268,21 +283,13 @@ class PreviewView
             $variables['label'] = $label;
         }
 
-        $templatePaths = new TemplatePaths($paths);
-        $viewContext = new ViewContext($templatePathAndFilename, $extensionKey, self::CONTROLLER_NAME);
-        $viewContext->setTemplatePaths($templatePaths);
-        $viewContext->setVariables($variables);
-        $view = $this->configurationService->getPreparedExposedTemplateView($viewContext);
-
-        $existingContentObject = $this->configurationManager->getContentObject();
-        $contentObject = new ContentObjectRenderer();
-        $contentObject->start($row, $provider->getTableName($row));
-        $this->configurationManager->setContentObject($contentObject);
-        $previewContent = $view->renderStandaloneSection(self::PREVIEW_SECTION, $variables, true);
-        $this->configurationManager->setContentObject($existingContentObject);
-        $previewContent = trim($previewContent);
-
-        return $previewContent;
+        $this->getRenderingContext()->setControllerName($provider->getControllerNameFromRecord($row));
+        $this->getRenderingContext()->setControllerAction($provider->getControllerActionFromRecord($row));
+        $this->getRenderingContext()->getTemplatePaths()->fillDefaultsByPackageName(
+            ExtensionNamingUtility::getExtensionKey($extensionKey)
+        );
+        $this->getRenderingContext()->getTemplatePaths()->setTemplatePathAndFilename($templatePathAndFilename);
+        return $this->renderSection('Preview', $variables, true);
     }
 
     /**
@@ -631,13 +638,7 @@ class PreviewView
             ContentService::COLPOS_FLUXCONTENT,
             BackendUtility::versioningPlaceholderClause('tt_content')
         );
-        if (GeneralUtility::compat_version('8.4.0') && !GeneralUtility::compat_version('8.5.0')) {
-            // Patching to avoid http://forge.typo3.org/issues/78353 by specifically targeting only the 8.4.x branch
-            // which is the only branch to display the symptom. Bug is fixed in coming 8.5.0 and does not exist in
-            // LTS - @TODO: remove this patch when 8.4.x is no longer supported, but no need to hurry.
-            $condition .= ' AND ';
-        }
-        $result = $this->getDatabaseConnection()->exec_SELECTgetRows('*', 'tt_content', $condition, '', 'sorting');
+        $result = $this->recordService->get('tt_content', '*', $condition, '', 'sorting');
         $rows = [];
         if ($result) {
             foreach ($result as $contentRecord) {
@@ -745,15 +746,6 @@ class PreviewView
     protected function getPageModuleSettings()
     {
         return $GLOBALS['SOBE']->MOD_SETTINGS;
-    }
-
-    /**
-     * @codeCoverageIgnore
-     * @return DatabaseConnection
-     */
-    protected function getDatabaseConnection()
-    {
-        return $GLOBALS['TYPO3_DB'];
     }
 
     /**
@@ -868,6 +860,7 @@ class PreviewView
             $this->showNewContentButton ? $this->drawNewIcon($row, $column) :'',
             $this->showNewContentButton && CompatibilityRegistry::get(static::class . '->drawPasteIcon') ? $this->drawPasteIcon($row, $column) : '',
             $this->showNewContentButton ? $this->drawPasteIcon($row, $column, true) : '',
+
             $content
         );
     }

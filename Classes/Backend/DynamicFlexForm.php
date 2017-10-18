@@ -11,8 +11,10 @@ namespace FluidTYPO3\Flux\Backend;
 use FluidTYPO3\Flux\Form;
 use FluidTYPO3\Flux\Service\FluxService;
 use FluidTYPO3\Flux\Service\WorkspacesAwareRecordService;
+use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Cache\CacheManager;
 use TYPO3\CMS\Core\Cache\Frontend\VariableFrontend;
+use TYPO3\CMS\Core\Configuration\FlexForm\FlexFormTools;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Extbase\Object\ObjectManager;
 use TYPO3\CMS\Extbase\Object\ObjectManagerInterface;
@@ -20,7 +22,7 @@ use TYPO3\CMS\Extbase\Object\ObjectManagerInterface;
 /**
  * Dynamic FlexForm insertion hook class
  */
-class DynamicFlexForm
+class DynamicFlexForm extends FlexFormTools
 {
 
     /**
@@ -37,6 +39,11 @@ class DynamicFlexForm
      * @var WorkspacesAwareRecordService
      */
     protected $recordService;
+
+    /**
+     * @var boolean
+     */
+    protected static $recursed = false;
 
     /**
      * @param ObjectManagerInterface $objectManager
@@ -88,6 +95,10 @@ class DynamicFlexForm
      */
     public function getDataStructureIdentifierPreProcess(array $tca, $tableName, $fieldName, array $record)
     {
+        if (static::$recursed) {
+            return [];
+        }
+
         // Select a limited set of the $record being passed. When the $record is a new record, it will have
         // no UID but will contain a list of default values, in which case we extract a smaller list of
         // values based on the "useColumnsForDefaultValues" TCA control (we mimic the amount of data that
@@ -98,29 +109,36 @@ class DynamicFlexForm
         if ((integer) $record['uid']) {
             $limitedRecordData = ['uid' => $record['uid']];
         } else {
-            $defaultFields = GeneralUtility::trimExplode(',', $GLOBALS['TCA'][$tableName]['ctrl']['useColumnsForDefaultValues']);
-            $defaultFields = array_combine($defaultFields, $defaultFields);
-            $limitedRecordData = array_intersect_key($record, $defaultFields);
+            $fields = GeneralUtility::trimExplode(',', $GLOBALS['TCA'][$tableName]['ctrl']['useColumnsForDefaultValues']);
+            if ($GLOBALS['TCA'][$tableName]['ctrl']['type'] ?? false) {
+                $fields[] = $GLOBALS['TCA'][$tableName]['ctrl']['type'];
+                if ($GLOBALS['TCA'][$tableName]['ctrl'][$GLOBALS['TCA'][$tableName]['ctrl']['type']]['subtype_value_field'] ?? false) {
+                    $fields[] = $GLOBALS['TCA'][$tableName]['ctrl'][$GLOBALS['TCA'][$tableName]['ctrl']['type']]['subtype_value_field'];
+                }
+            }
+            $fields = array_combine($fields, $fields);
+            $limitedRecordData = array_intersect_key($record, $fields);
             $limitedRecordData[$fieldName] = $record[$fieldName];
         }
         $providers = $this->configurationService->resolveConfigurationProviders($tableName, $fieldName, $record);
         if (count($providers) === 0) {
             return [];
         }
-        return [
+        static::$recursed = true;
+        $identifier = [
             'type' => 'flux',
             'tableName' => $tableName,
             'fieldName' => $fieldName,
-            'record' => $limitedRecordData
+            'record' => $limitedRecordData,
+            'originalIdentifier' => $this->getDataStructureIdentifier(
+                [ 'config' => $GLOBALS['TCA'][$tableName]['columns'][$fieldName]['config']],
+                $tableName,
+                $fieldName,
+                $record
+            )
         ];
-    }
-
-    /**
-     * @param array $identifier
-     * @return array
-     */
-    protected function resolveDataStructureByIdentifier(array $identifier)
-    {
+        static::$recursed = false;
+        return $identifier;
     }
 
     /**
@@ -136,23 +154,20 @@ class DynamicFlexForm
         if (!$record) {
             return [];
         }
-        $cache = $this->getCache();
-        $runtimeCache = $this->getRuntimeCache();
-        $cacheKey = 'ds-' . md5(serialize($identifier));
-        $fromCache = $runtimeCache->get($cacheKey) or $fromCache = $cache->get($cacheKey);
+
+        $fromCache = $this->configurationService->getFromCaches($identifier);
         if ($fromCache) {
             return $fromCache;
         }
         if (count($record) === 1 && isset($record['uid'])) {
-            $record = $this->recordService->getSingle($identifier['tableName'], '*', $record['uid']);
+            $record = BackendUtility::getRecord($identifier['tableName'], $record['uid'], '*', '', false);
         }
         $fieldName = $identifier['fieldName'];
-        $dataStructArray = [];
+        $dataStructArray = $dataStructureArray = $this->parseDataStructureByIdentifier($identifier['originalIdentifier']);;
         $providers = $this->configurationService->resolveConfigurationProviders($identifier['tableName'], $fieldName, $record);
         if (count($providers) === 0) {
             // No Providers detected - we will cache this response
-            $cache->set($cacheKey, []);
-            $runtimeCache->set($cacheKey, []);
+            $this->configurationService->setInCaches([], true, $identifier);
             return [];
         }
         foreach ($providers as $provider) {
@@ -164,8 +179,7 @@ class DynamicFlexForm
             if ($form->getOption(Form::OPTION_STATIC)) {
                 // This provider has requested static DS caching; stop attempting
                 // to process any other DS, cache and return this DS as final result:
-                $cache->set($cacheKey, $dataStructArray);
-                $runtimeCache->set($cacheKey, $dataStructArray);
+                $this->configurationService->setInCaches($dataStructArray, true, $identifier);
                 return $dataStructArray;
             }
         }
@@ -174,98 +188,9 @@ class DynamicFlexForm
         }
 
         $dataStructArray = $this->patchTceformsWrapper($dataStructArray);
+        $this->configurationService->setInCaches($dataStructArray, false, $identifier);
 
-        $runtimeCache->set($cacheKey, $dataStructArray);
         return $dataStructArray;
-    }
-
-    /**
-     * Hook for generating dynamic FlexForm source code.
-     *
-     * NOTE: patches data structure resolving in a way that solves
-     * a regression in the TYPO3 core when dealing with IRRE AJAX
-     * requests (in which the database record is no longer fetched
-     * by the controller). This patches not only data structure
-     * resolving for Flux data structures but indeed any data
-     * structure built using hooks or involving user functions which
-     * require the entire record (but when using hooks, supports
-     * only extensions which are loaded AFTER or depend on Flux).
-     *
-     * @param array $dataStructArray
-     * @param array $conf
-     * @param array $row
-     * @param string $table
-     * @param string $fieldName
-     * @return void
-     * @codingStandardsIgnoreStart this method signature is excluded from CGL checks due to required "bad" method name
-     */
-    public function getFlexFormDS_postProcessDS(&$dataStructArray, $conf, &$row, $table, $fieldName)
-    {
-        // @codingStandardsIgnoreEnd This comment ends CGL exemption to ensure only the signature is exempted!
-        $cache = $this->getCache();
-        if (empty($fieldName) === true) {
-            // Cast NULL if an empty but not-NULL field name was passed. This has significance to the Flux internals in
-            // respect to which ConfigurationProvider(s) are returned.
-            $fieldName = null;
-        }
-        if (!empty($fieldName) && !isset($row[$fieldName])) {
-            // Patch required (possibly temporary). Due to changes in TYPO3 in the new FormEngine we must fetch the
-            // database record at this point when the record is incomplete, which happens when attempting to render
-            // IRRE records. The reason is that the controller that creates the HTML does not fetch the record any
-            // more - and that the AJAX request contains only the UID. So, we fetch the record here to ensure it
-            // contains the necessary fields. DOES NOT WORK FOR NEW RECORDS - SEE COMMENTS BELOW.
-            $row = $this->recordService->getSingle($table, '*', $row['uid']);
-        }
-        $defaultDataSourceCacheIdentifier = $table . '_' . $fieldName . '_' . sha1(serialize($conf));
-        if (!$row) {
-            // In the case that the database record cannot be fetched we are dealing with a new or otherwise deleted
-            // or unidentifiable record. This happens primarily when AJAX requests are made to render IRRE records
-            // without the parent record having been saved first. To accommodate this case we have to be slightly
-            // creative and store a "default" data source definition which is identified based on a checksum of the
-            // configuration provided. Whenever we are then unable to fetch a record, we can at least attempt to
-            // locate a default data source in previously cached content. NB: we enforce a VERY high cache lifetime
-            // and continually refresh it every time it is possible to render a new DS that can serve as default.
-            $dataStructArray = (array) $cache->get($defaultDataSourceCacheIdentifier);
-        } else {
-            if (false === is_array($dataStructArray)) {
-                $dataStructArray = [];
-            }
-            $providers = $this->configurationService->resolveConfigurationProviders($table, $fieldName, $row);
-            foreach ($providers as $provider) {
-                $form = $provider->getForm($row);
-                if (!$form) {
-                    continue;
-                }
-                $formId = $form->getId();
-                if ($form->getOption(Form::OPTION_STATIC)) {
-
-                    $cacheKey = $this->calculateFormCacheKey($formId);
-                    if ($cache->has($cacheKey)) {
-                        $dataStructArray = $cache->get($cacheKey);
-                        return;
-                    }
-                    // This provider has requested static DS caching; stop attempting
-                    // to process any other DS and cache this DS as final result:
-                    $provider->postProcessDataStructure($row, $dataStructArray, $conf);
-                    $cache->set($cacheKey, $dataStructArray);
-                    return;
-                } else {
-                    $provider->postProcessDataStructure($row, $dataStructArray, $conf);
-                }
-            }
-            if (empty($dataStructArray)) {
-                $dataStructArray = ['ROOT' => ['el' => []]];
-            }
-            $evaluationParameters = [];
-            $cache->set(
-                $defaultDataSourceCacheIdentifier,
-                $this->recursivelyEvaluateClosures($dataStructArray, $evaluationParameters),
-                [],
-                (time() + 31536000)
-            );
-        }
-
-        $dataStructArray = $this->patchTceformsWrapper($dataStructArray);
     }
 
     /**
@@ -340,15 +265,5 @@ class DynamicFlexForm
             $cache = GeneralUtility::makeInstance(CacheManager::class)->getCache('cache_runtime');
         }
         return $cache;
-    }
-
-    /**
-     * @param string $formId
-     *
-     * @return string
-     */
-    private function calculateFormCacheKey($formId)
-    {
-        return 'datastructure-' . $formId;
     }
 }

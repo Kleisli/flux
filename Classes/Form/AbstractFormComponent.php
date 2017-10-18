@@ -91,6 +91,11 @@ abstract class AbstractFormComponent implements FormInterface
     protected $inheritEmpty = false;
 
     /**
+     * @var string
+     */
+    protected $transform;
+
+    /**
      * @param array $settings
      * @return FormInterface
      */
@@ -159,8 +164,7 @@ abstract class AbstractFormComponent implements FormInterface
     public function createComponent($namespace, $type, $name, $label = null)
     {
         /** @var FormInterface $component */
-        $className = $this->createComponentClassName($type, $namespace);
-        $component = $this->getObjectManager()->get($className);
+        $component = GeneralUtility::makeInstance($this->createComponentClassName($type, $namespace));
         if (null === $component->getName()) {
             $component->setName($name);
         }
@@ -169,6 +173,30 @@ abstract class AbstractFormComponent implements FormInterface
         $component->setDisableLocalLanguageLabels($this->getDisableLocalLanguageLabels());
         $component->setExtensionName($this->getExtensionName());
         return $component;
+    }
+
+    /**
+     * @param string $transform
+     * @return FormInterface
+     */
+    public function setTransform($transform)
+    {
+        $this->transform = $transform;
+        if ($transform) {
+            $root = $this->getRoot();
+            if ($root instanceof Form) {
+                $root->setOption(Form::OPTION_TRANSFORM, true);
+            }
+        }
+        return $this;
+    }
+
+    /**
+     * @return string
+     */
+    public function getTransform()
+    {
+        return $this->transform;
     }
 
     /**

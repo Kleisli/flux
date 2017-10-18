@@ -41,6 +41,7 @@ class Form extends Form\AbstractFormContainer implements Form\FieldContainerInte
     const OPTION_RECORD_FIELD = 'recordField';
     const OPTION_RECORD_TABLE = 'recordTable';
     const OPTION_DEFAULT_VALUES = 'defaultValues';
+    const OPTION_TRANSFORM = 'transform';
     const POSITION_TOP = 'top';
     const POSITION_BOTTOM = 'bottom';
     const POSITION_BOTH = 'both';
@@ -97,7 +98,7 @@ class Form extends Form\AbstractFormContainer implements Form\FieldContainerInte
     public function initializeObject()
     {
         /** @var Form\Container\Sheet $defaultSheet */
-        $defaultSheet = $this->getObjectManager()->get(Sheet::class);
+        $defaultSheet = GeneralUtility::makeInstance(Sheet::class);
         $defaultSheet->setName('options');
         $defaultSheet->setLabel('LLL:EXT:flux' . $this->localLanguageFileRelativePath . ':tt_content.tx_flux_options');
         $this->add($defaultSheet);
@@ -445,6 +446,11 @@ class Form extends Form\AbstractFormContainer implements Form\FieldContainerInte
                 $sheet->modify($sheetData);
             }
             unset($structure['sheets'], $structure['children']);
+        }
+        if (isset($structure['outlet'])) {
+            $outlet = StandardOutlet::create($structure['outlet']);
+            $this->setOutlet($outlet);
+            unset($structure['outlet']);
         }
         return parent::modify($structure);
     }

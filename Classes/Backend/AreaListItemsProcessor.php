@@ -11,6 +11,7 @@ namespace FluidTYPO3\Flux\Backend;
 use FluidTYPO3\Flux\Provider\ProviderInterface;
 use FluidTYPO3\Flux\Service\FluxService;
 use FluidTYPO3\Flux\Service\RecordService;
+use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Extbase\Object\ObjectManager;
 use TYPO3\CMS\Extbase\Object\ObjectManagerInterface;
@@ -96,6 +97,7 @@ class AreaListItemsProcessor
     {
         $uid = (integer) $uid;
         $record = $this->recordService->getSingle('tt_content', '*', $uid);
+        BackendUtility::workspaceOL('tt_content', $record);
         /** @var $providers ProviderInterface[] */
         $providers = $this->fluxService->resolveConfigurationProviders('tt_content', null, $record);
         $columns = [];
@@ -107,7 +109,12 @@ class AreaListItemsProcessor
             $gridConfiguration = $grid->build();
             foreach ($gridConfiguration['rows'] as $row) {
                 foreach ($row['columns'] as $column) {
-                    array_push($columns, [$column['label'] . ' (' . $column['name'] . ')', $column['name']]);
+                    if (strpos($column['label'], 'LLL:') !== 0) {
+                        $label = $column['label'] . ' (' . $column['name'] . ')';
+                    } else {
+                        $label = $column['label'];
+                    }
+                    array_push($columns, [$label, $column['name']]);
                 }
             }
         }

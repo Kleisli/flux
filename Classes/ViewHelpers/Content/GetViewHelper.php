@@ -10,6 +10,7 @@ namespace FluidTYPO3\Flux\ViewHelpers\Content;
 
 use FluidTYPO3\Flux\Service\FluxService;
 use FluidTYPO3\Flux\Service\WorkspacesAwareRecordService;
+use FluidTYPO3\Flux\ViewHelpers\FormViewHelper;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Extbase\Configuration\ConfigurationManagerInterface;
@@ -20,10 +21,32 @@ use TYPO3\CMS\Fluid\Core\ViewHelper\Facets\CompilableInterface;
 use TYPO3\CMS\Frontend\ContentObject\ContentObjectRenderer;
 use TYPO3Fluid\Fluid\Core\ViewHelper\Traits\CompileWithRenderStatic;
 
+
 /**
- * ### Content: Get ViewHelper
- *
  * Gets all child content of a record based on area.
+ *
+ * The elements are already rendered, they just need to be output.
+ *
+ * ### Example: Render all child elements with a border
+ *
+ * `fluidcontent` element with one column of child elements.
+ * Each element gets a red border:
+ *
+ *     <f:section name="Configuration">
+ *      <flux:grid>
+ *       <flux:grid.row>
+ *        <flux:grid.column name="teaser"/>
+ *       </flux:grid.row>
+ *      </flux:grid>
+ *     </f:section>
+ *
+ *     <f:section name="Main">
+ *      <f:for each="{flux:content.get(area:'teaser')}" as="element">
+ *       <div style="border: 1px solid red">
+ *        <f:format.raw>{element}</f:format.raw>
+ *       </div>
+ *      </f:for>
+ *     </f:section>
  */
 class GetViewHelper extends AbstractViewHelper implements CompilableInterface
 {
@@ -35,14 +58,12 @@ class GetViewHelper extends AbstractViewHelper implements CompilableInterface
     protected $escapeOutput = false;
 
     /**
-     * @var \FluidTYPO3\Flux\Service\FluxService
-     * @inject
+     * @var FluxService
      */
     protected static $configurationService;
 
     /**
-     * @var \TYPO3\CMS\Extbase\Configuration\ConfigurationManagerInterface
-     * @inject
+     * @var ConfigurationManagerInterface
      */
     protected static $configurationManager;
 
@@ -51,32 +72,6 @@ class GetViewHelper extends AbstractViewHelper implements CompilableInterface
      */
     protected static $recordService;
 
-    /**
-     * @param FluxService $configurationService
-     * @return void
-     */
-    public function injectConfigurationService(FluxService $configurationService)
-    {
-        static::$configurationService = $configurationService;
-    }
-
-    /**
-     * @param ConfigurationManagerInterface $configurationManager
-     * @return void
-     */
-    public function injectConfigurationManager(ConfigurationManagerInterface $configurationManager)
-    {
-        static::$configurationManager = $configurationManager;
-    }
-
-    /**
-     * @param WorkspacesAwareRecordService $recordService
-     * @return void
-     */
-    public function injectRecordService(WorkspacesAwareRecordService $recordService)
-    {
-        static::$recordService = $recordService;
-    }
     /**
      * Initialize
      * @return void
@@ -116,19 +111,10 @@ class GetViewHelper extends AbstractViewHelper implements CompilableInterface
         \Closure $renderChildrenClosure,
         RenderingContextInterface $renderingContext
     ) {
-        if (!static::$configurationService || !static::$configurationManager || !static::$recordService) {
-            $objectManager = GeneralUtility::makeInstance(ObjectManager::class);
-            if (static::$configurationService === null) {
-                static::$configurationService = $objectManager->get(FluxService::class);
-            }
-            if (static::$configurationManager === null) {
-                static::$configurationManager = $objectManager->get(ConfigurationManagerInterface::class);
-            }
-            if (static::$recordService === null) {
-                static::$recordService = $objectManager->get(WorkspacesAwareRecordService::class);
-            }
-        }
-        $templateVariableContainer = $renderingContext->getTemplateVariableContainer();
+        $objectManager = GeneralUtility::makeInstance(ObjectManager::class);
+        static::$configurationService = static::$configurationService ?? $objectManager->get(FluxService::class);
+        static::$configurationManager = $configurationManager ?? $objectManager->get(ConfigurationManagerInterface::class);
+
         $contentObjectRenderer = static::getContentObjectRenderer();
 
         $loadRegister = false;
@@ -136,7 +122,8 @@ class GetViewHelper extends AbstractViewHelper implements CompilableInterface
             $contentObjectRenderer->cObjGetSingle('LOAD_REGISTER', $arguments['loadRegister']);
             $loadRegister = true;
         }
-        $record = $templateVariableContainer->get('record');
+        $templateVariableContainer = $renderingContext->getVariableProvider();
+        $record = $renderingContext->getViewHelperVariableContainer()->get(FormViewHelper::class, 'record');
         $id = $record['uid'];
         $order = $arguments['order'];
         $area = $arguments['area'];
@@ -166,7 +153,7 @@ class GetViewHelper extends AbstractViewHelper implements CompilableInterface
             $contentObjectRenderer->enableFields('tt_content'),
             BackendUtility::versioningPlaceholderClause('tt_content')
         );
-        $rows = static::$recordService->get('tt_content', '*', $conditions, '', $order, $offset . ',' . $limit);
+        $rows = static::getRecordService()->get('tt_content', '*', $conditions, '', $order, $offset . ',' . $limit);
 
         $elements = false === (boolean) $arguments['render'] ? $rows : static::getRenderedRecords($rows);
         if (true === empty($arguments['as'])) {
@@ -188,6 +175,14 @@ class GetViewHelper extends AbstractViewHelper implements CompilableInterface
             $contentObjectRenderer->cObjGetSingle('RESTORE_REGISTER', '');
         }
         return $content;
+    }
+
+    /**
+     * @return WorkspacesAwareRecordService
+     */
+    protected static function getRecordService()
+    {
+        return GeneralUtility::makeInstance(ObjectManager::class)->get(WorkspacesAwareRecordService::class);
     }
 
     /**
